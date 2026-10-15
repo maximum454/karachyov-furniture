@@ -43,7 +43,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && !empty($_POST["product_id"])) {
     $productFabric = !empty($_POST["product_fabric"]) ? htmlspecialcharsbx($_POST["product_fabric"]) : '';
     $productOptions = !empty($_POST["product_options"]) ? htmlspecialcharsbx($_POST["product_options"]) : '';
 
-    // Поля калькулятора (передаются витриной, если расчёт производился)
+    // Поля калькулятора (передаются с витрины)
     $specId     = isset($_POST["spec_id"]) ? trim((string)$_POST["spec_id"]) : '';
     $fabricId   = isset($_POST["fabric_id"]) ? trim((string)$_POST["fabric_id"]) : '';
     $costPrice  = isset($_POST["cost_price"]) ? (float)$_POST["cost_price"] : 0;

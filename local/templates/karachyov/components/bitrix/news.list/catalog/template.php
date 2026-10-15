@@ -31,50 +31,58 @@ $this->setFrameMode(true);
                 $itemId = $arItem["ID"];
 
                 // 1. Берём ID спецификаций из LINK_ELEMENT_VALUE (только те, что привязаны к товару через SPECIFICATIONS)
-                $arSpecList = [];
-                $arSpecIds = [];
-                $firstSize = '';
-                $hasOptions = false;
-                $specIds = [];
+                                $arSpecList = [];
+                                $arBaseSizes = [];
+                                $arOptionSpecs = [];
+                                $arSpecIds = [];
+                                $arSeenSizeKeys = [];
+                                $firstSize = '';
+                                $hasOptions = false;
+                                $specIds = [];
 
-                if (!empty($arItem["DISPLAY_PROPERTIES"]["SPECIFICATIONS"]["LINK_ELEMENT_VALUE"])) {
-                    foreach ($arItem["DISPLAY_PROPERTIES"]["SPECIFICATIONS"]["LINK_ELEMENT_VALUE"] as $specId => $arSpec) {
-                        $specIds[] = $specId;
-                    }
-                }
+                                if (!empty($arItem["DISPLAY_PROPERTIES"]["SPECIFICATIONS"]["LINK_ELEMENT_VALUE"])) {
+                                    foreach ($arItem["DISPLAY_PROPERTIES"]["SPECIFICATIONS"]["LINK_ELEMENT_VALUE"] as $specId => $arSpec) {
+                                        $specIds[] = $specId;
+                                    }
+                                }
 
-                if (!empty($specIds)) {
-                    $dbSpecs = CIBlockElement::GetList(
-                        ["SORT" => "ASC", "ID" => "ASC"],
-                        ["IBLOCK_ID" => 49, "ID" => $specIds, "ACTIVE" => "Y"],
-                        false,
-                        false,
-                        ["ID", "NAME", "PROPERTY_SPEC_TYPE", "PROPERTY_SIZE"]
-                    );
-                    while ($arSpec = $dbSpecs->Fetch()) {
-                    // GetList с фильтром по свойству может вернуть дубликаты — дедуплицируем
-                    if (isset($arSpecIds[$arSpec["ID"]])) continue;
-                    $arSpecIds[$arSpec["ID"]] = true;
-                    $arSpecList[] = $arSpec;
+                                if (!empty($specIds)) {
+                                    $dbSpecs = CIBlockElement::GetList(
+                                        ["SORT" => "ASC", "ID" => "ASC"],
+                                        ["IBLOCK_ID" => 49, "ID" => $specIds, "ACTIVE" => "Y"],
+                                        false,
+                                        false,
+                                        ["ID", "NAME", "PROPERTY_SPEC_TYPE", "PROPERTY_SIZE"]
+                                    );
+                                    while ($arSpec = $dbSpecs->Fetch()) {
+                                        if (isset($arSpecIds[$arSpec["ID"]])) continue;
+                                        $arSpecIds[$arSpec["ID"]] = true;
+                                        $arSpecList[] = $arSpec;
 
-                    $specTypeXmlId = !empty($arSpec["PROPERTY_SPEC_TYPE_VALUE_XML_ID"]) ? $arSpec["PROPERTY_SPEC_TYPE_VALUE_XML_ID"] : (!empty($arSpec["PROPERTY_SPEC_TYPE_VALUE"]) ? $arSpec["PROPERTY_SPEC_TYPE_VALUE"] : '');
+                                        $specTypeXmlId = !empty($arSpec["PROPERTY_SPEC_TYPE_VALUE_XML_ID"]) ? $arSpec["PROPERTY_SPEC_TYPE_VALUE_XML_ID"] : (!empty($arSpec["PROPERTY_SPEC_TYPE_VALUE"]) ? $arSpec["PROPERTY_SPEC_TYPE_VALUE"] : '');
 
-                    if ($specTypeXmlId === 'OPTION') {
-                        $hasOptions = true;
-                        continue;
-                    }
-
-                    if (empty($firstSize)) {
-                        $sizeEnum = !empty($arSpec["PROPERTY_SIZE_VALUE"]) ? $arSpec["PROPERTY_SIZE_VALUE"] : '';
-                        $firstSize = !empty($sizeEnum) ? $sizeEnum : $arSpec["NAME"];
-                    }
-                }
+                                        if ($specTypeXmlId === 'OPTION' || $specTypeXmlId === 'Опция') {
+                                            $arOptionSpecs[] = $arSpec;
+                                            $hasOptions = true;
+                                        } else {
+                                            $sizeEnum = !empty($arSpec["PROPERTY_SIZE_VALUE"]) ? $arSpec["PROPERTY_SIZE_VALUE"] : '';
+                                            // Дедуплицируем размеры: если такой SIZE уже есть — пропускаем
+                                            if (!empty($sizeEnum) && isset($arSeenSizeKeys[$sizeEnum])) continue;
+                                            if (!empty($sizeEnum)) $arSeenSizeKeys[$sizeEnum] = true;
+                                            $arBaseSizes[] = $arSpec;
+                                            if (empty($firstSize)) {
+                                                $firstSize = !empty($sizeEnum) ? $sizeEnum : $arSpec["NAME"];
+                                            }
+                                        }
+                                    }
+                                }
 
                 if (empty($firstSize)) {
                     $firstSize = '160x200';
                 }
-
-                // 2. Выборка тканей (ИБ 48 — Ткани, ИБ 51 — Цвета SKU)
+                ?>
+                <!-- 2. Выборка тканей (ИБ 48 — Ткани, ИБ 51 — Цвета SKU) -->
+                <?php
                 $arItemFabrics = [];
 
                 // Получаем привязанные к товару коллекции из свойства FABRICS (ИБ 48)
@@ -106,33 +114,33 @@ $this->setFrameMode(true);
                             $extraPrice = (float)$arCol["PROPERTY_PRICE_VALUE"];
 
                             // Ищем цвет в ИБ 51 для этой коллекции
-                            // Шаг А: сначала ищем с галочкой IS_MAIN_PREVIEW
+                            // Сначала: ищем с галочкой IS_MAIN_PREVIEW=Y
                             $arColor = false;
                             $dbColorMain = CIBlockElement::GetList(
                                 ["SORT" => "ASC", "ID" => "DESC"],
-                                ["IBLOCK_ID" => 51, "PROPERTY_CSTAR_LINK" => $colId, "PROPERTY_IS_MAIN_PREVIEW_VALUE" => "Y", "ACTIVE" => "Y"],
+                                ["IBLOCK_ID" => 51, "PROPERTY_FABRIC_COLLECTION" => $colId, "ACTIVE" => "Y"],
                                 false,
-                                ["nTopCount" => 1],
-                                ["ID", "NAME", "PREVIEW_PICTURE", "PROPERTY_COLOR_CODE", "PROPERTY_COLOR_NAME", "PROPERTY_COLOR_HEX"]
+                                ["nTopCount" => 5],
+                                ["ID", "NAME", "PREVIEW_PICTURE", "PROPERTY_COLOR_CODE", "PROPERTY_COLOR_NAME", "PROPERTY_COLOR_HEX", "PROPERTY_IS_MAIN_PREVIEW"]
                             );
-                            $arColor = $dbColorMain->Fetch();
-
-                            // Шаг Б: если главная превью-ткань не задана, берем первый доступный цвет
-                            if (!$arColor) {
-                                $dbColorFallback = CIBlockElement::GetList(
-                                    ["SORT" => "ASC", "ID" => "DESC"],
-                                    ["IBLOCK_ID" => 51, "PROPERTY_CSTAR_LINK" => $colId, "ACTIVE" => "Y"],
-                                    false,
-                                    ["nTopCount" => 1],
-                                    ["ID", "NAME", "PREVIEW_PICTURE", "PROPERTY_COLOR_CODE", "PROPERTY_COLOR_NAME", "PROPERTY_COLOR_HEX"]
-                                );
-                                $arColor = $dbColorFallback->Fetch();
+                            // Собираем все цвета коллекции, main первый
+                            $arFoundColors = array();
+                            while ($arColorItem = $dbColorMain->Fetch()) {
+                                $isMain = !empty($arColorItem["PROPERTY_IS_MAIN_PREVIEW_VALUE"]) ? true : false;
+                                if ($isMain) {
+                                    // Main — вставляем в начало
+                                    array_unshift($arFoundColors, $arColorItem);
+                                } else {
+                                    $arFoundColors[] = $arColorItem;
+                                }
                             }
+                            // Берем первый (main или первый попавшийся)
+                            $arColor = !empty($arFoundColors) ? $arFoundColors[0] : false;
 
                             if ($arColor) {
                                 $colorCode = $arColor["PROPERTY_COLOR_CODE_VALUE"];
                                 $colorName = $arColor["PROPERTY_COLOR_NAME_VALUE"];
-                                $colorHex = $arColor["PROPERTY_COLOR_HEX_VALUE"] ?: '#cccccc';
+                                $colorHex = !empty($arColor["PROPERTY_COLOR_HEX_VALUE"]) ? $arColor["PROPERTY_COLOR_HEX_VALUE"] : '#cccccc';
                                 $imgSrc = CFile::GetPath($arColor["PREVIEW_PICTURE"]);
 
                                 // Формируем полное отображаемое название
@@ -193,15 +201,10 @@ $this->setFrameMode(true);
                         <div class="product-card__spec-block">
                             <span class="product-card__label">Размер:</span>
                             <div class="product-card__sizes js-size-group">
-                                <?if(!empty($arSpecList)):?>
+                                <?if(!empty($arBaseSizes)):?>
                                     <?$isFirst = true;?>
-                                    <?foreach($arSpecList as $arSpec):?>
+                                    <?foreach($arBaseSizes as $arSpec):?>
                                         <?
-                                        $specTypeXmlId = !empty($arSpec["PROPERTY_SPEC_TYPE_VALUE_XML_ID"]) ? $arSpec["PROPERTY_SPEC_TYPE_VALUE_XML_ID"] : (!empty($arSpec["PROPERTY_SPEC_TYPE_VALUE"]) ? $arSpec["PROPERTY_SPEC_TYPE_VALUE"] : '');
-                                        if ($specTypeXmlId === 'OPTION') {
-                                            continue;
-                                        }
-
                                         $sizeEnum = !empty($arSpec["PROPERTY_SIZE_VALUE"]) ? $arSpec["PROPERTY_SIZE_VALUE"] : '';
                                         $cleanSize = !empty($sizeEnum) ? $sizeEnum : $arSpec["NAME"];
                                         $specId = $arSpec["ID"];
@@ -223,15 +226,10 @@ $this->setFrameMode(true);
                             <div class="product-card__spec-block">
                                 <span class="product-card__label">Комплектация и опции:</span>
                                 <div class="product-card__options js-options-group">
-                                                                    <?foreach($arSpecList as $arSpec):?>
-                                                                        <?
-                                                                        $specTypeXmlId = !empty($arSpec["PROPERTY_SPEC_TYPE_VALUE_XML_ID"]) ? $arSpec["PROPERTY_SPEC_TYPE_VALUE_XML_ID"] : (!empty($arSpec["PROPERTY_SPEC_TYPE_VALUE"]) ? $arSpec["PROPERTY_SPEC_TYPE_VALUE"] : '');
-                                                                        if ($specTypeXmlId !== 'OPTION') {
-                                                                            continue;
-                                                                        }
-
-                                                                        $cleanOptionName = trim(preg_replace('/\\s*\\([^)]*\\)/u', '', $arSpec["NAME"]));
-                                                                        $specId = $arSpec["ID"];
+                                    <?foreach($arOptionSpecs as $arSpec):?>
+                                                                            <?
+                                                                            $cleanOptionName = trim(preg_replace('/\s*\([^)]*\)/u', '', $arSpec["NAME"]));
+                                                                            $specId = $arSpec["ID"];
                                                                         ?>
                                         <label class="product-card__option-item">
                                             <input type="checkbox"
@@ -309,6 +307,54 @@ $this->setFrameMode(true);
 </section>
 <script>
     document.addEventListener('DOMContentLoaded', function() {
+        // Функция пересчёта цены для карточки
+        function updatePrice(card) {
+            var specId = '';
+            var fabricId = '';
+            var optionIds = [];
+
+            var activeSize = card.querySelector('.js-size-btn.product-card__size--active');
+            if (activeSize) specId = activeSize.getAttribute('data-spec-id');
+
+            var activeFabric = card.querySelector('.js-fabric-btn.product-card__fabric-btn--active');
+            if (activeFabric) fabricId = activeFabric.getAttribute('data-fabric-id');
+
+            card.querySelectorAll('.js-option-btn:checked').forEach(function(opt) {
+                var oid = opt.getAttribute('data-spec-id');
+                if (oid) optionIds.push(oid);
+            });
+
+            if (!specId) return;
+
+            console.log('updatePrice spec=' + specId + ' fab=' + fabricId + ' opts=' + optionIds.join(','));
+
+            var url = '/local/ajax/calculator_api.php?action=calculate&spec_id=' + encodeURIComponent(specId)
+                + '&fabric_id=' + encodeURIComponent(fabricId ? fabricId : '0');
+            if (optionIds.length > 0) {
+                url += '&option_ids=' + optionIds.join(',');
+            }
+
+            var priceEl = card.querySelector('.product-card__price-value');
+            if (!priceEl) return;
+
+            var originalText = priceEl.innerText;
+            priceEl.innerText = '...';
+
+            fetch(url)
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data && data.success && data.recommended_price !== undefined) {
+                        var formatted = data.recommended_price.toString().replace(/(\d)(?=(\d{3})+$)/g, '$1 ');
+                        priceEl.innerText = formatted + ' ₸';
+                    } else {
+                        priceEl.innerText = originalText;
+                    }
+                })
+                .catch(function() {
+                    priceEl.innerText = originalText;
+                });
+        }
+
         // 1. Переключение размера
         document.querySelectorAll('.js-size-btn').forEach(function(btn) {
             btn.addEventListener('click', function() {
@@ -317,6 +363,7 @@ $this->setFrameMode(true);
                     el.classList.remove('product-card__size--active');
                 });
                 this.classList.add('product-card__size--active');
+                updatePrice(this.closest('.product-card'));
             });
         });
 
@@ -339,10 +386,19 @@ $this->setFrameMode(true);
                 if (labelText && fabricName) {
                     labelText.innerText = fabricName;
                 }
+
+                updatePrice(this.closest('.product-card'));
             });
         });
 
-        // 3. Обработка клика по "+50 тканей"
+        // 3. Переключение опций (чекбоксы) — пересчёт цены
+        document.querySelectorAll('.js-option-btn').forEach(function(opt) {
+            opt.addEventListener('change', function() {
+                updatePrice(this.closest('.product-card'));
+            });
+        });
+
+        // 4. Обработка клика по "+50 тканей"
         document.querySelectorAll('.js-fabric-more-btn').forEach(function(btn) {
             btn.addEventListener('click', function() {
                 var card = this.closest('.product-card');
@@ -402,6 +458,8 @@ $this->setFrameMode(true);
                 formData.append('product_size', selectedSize);
                 formData.append('product_fabric', selectedFabric);
                 formData.append('product_options', selectedOptions.join(', '));
+                formData.append('spec_id', activeSizeEl ? activeSizeEl.getAttribute('data-spec-id') : '');
+                formData.append('fabric_id', activeFabricEl ? activeFabricEl.getAttribute('data-fabric-id') : '');
 
                 fetch('/local/ajax/save_lead.php', {
                     method: 'POST',
@@ -424,6 +482,11 @@ $this->setFrameMode(true);
                         window.location.href = 'https://wa.me/' + phone + '?text=' + encodeURIComponent(waText);
                     });
             });
+        });
+
+        // Инициализация: пересчитать цену для всех карточек при загрузке
+        document.querySelectorAll('.product-card').forEach(function(card) {
+            updatePrice(card);
         });
     });
 </script>

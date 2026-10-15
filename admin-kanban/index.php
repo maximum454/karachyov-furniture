@@ -337,40 +337,52 @@ $APPLICATION->SetTitle("Канбан Заказов (Производство М
                     <h4 style="font-size: 15px; font-weight: 700; margin-bottom: 12px; color: #1e293b;">🧮 Расчет стоимости и материалов</h4>
 
                     <div class="row g-2 mb-2">
-                        <div class="col-md-6">
-                            <label class="form-label small">Модель / Спецификация</label>
-                            <select v-model="selectedSpecId" @change="onSpecChange" class="form-control form-control-sm" :disabled="!isEditing && selectedCard">
-                                <option value="">-- Выберите модель --</option>
-                                <option v-for="spec in specifications" :key="spec.id" :value="spec.id">
-                                    {{ spec.title }} ({{ spec.size }})
-                                </option>
+                        <div class="col-md-4">
+                            <label class="form-label small">Модель</label>
+                            <select v-model="selectedModelId" class="form-control form-control-sm" :disabled="!isEditing && selectedCard">
+                                <option value="">-- Модель --</option>
+                                <option v-for="m in models" :key="m.id" :value="m.id">{{ m.name }}</option>
                             </select>
                         </div>
-                        <div class="col-md-6">
+                        <div class="col-md-4">
+                            <label class="form-label small">Размер</label>
+                            <select v-model="selectedSpecId" class="form-control form-control-sm" :disabled="!isEditing && selectedCard">
+                                <option value="">-- Размер --</option>
+                                <option v-for="s in modelSizes" :key="s.id" :value="s.id">{{ s.title }} ({{ s.size }})</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
                             <label class="form-label small">Ткань</label>
-                            <select v-model="selectedFabricId" @change="onFabricChange" class="form-control form-control-sm" :disabled="!isEditing && selectedCard">
-                                <option value="">-- Выберите ткань --</option>
-                                <option v-for="fab in fabrics" :key="fab.id" :value="fab.id">
-                                    {{ fab.name }} ({{ fab.pricePerMeter }} ₸/м)
-                                </option>
+                            <select v-model="selectedFabricId" class="form-control form-control-sm" :disabled="!isEditing && selectedCard">
+                                <option value="">-- Ткань --</option>
+                                <option v-for="fab in fabrics" :key="fab.id" :value="fab.id">{{ fab.name }} ({{ fab.pricePerMeter }} ₸/м)</option>
                             </select>
                         </div>
                     </div>
 
-                    <div class="form-check mb-2">
-                        <input type="checkbox" id="modalMechCheck" v-model="hasMechanism" class="form-check-input" :disabled="!isEditing && selectedCard">
-                        <label for="modalMechCheck" class="form-check-label small fw-semibold">Подъемный механизм (ПМ)</label>
+                    <!-- Опции -->
+                    <div v-if="modelOptions.length > 0" class="mb-2">
+                        <label class="form-label small">Опции:</label>
+                        <div v-for="opt in modelOptions" :key="opt.id" class="form-check">
+                            <input type="checkbox"
+                                   :value="opt.id"
+                                   v-model="selectedOptionIds"
+                                   class="form-check-input"
+                                   :id="'opt-' + opt.id"
+                                   :disabled="!isEditing && selectedCard">
+                            <label :for="'opt-' + opt.id" class="form-check-label small">{{ opt.title }}</label>
+                        </div>
                     </div>
 
                     <!-- Финансовая сводка -->
-                    <div class="row text-center bg-white p-2 rounded border my-2" v-if="selectedSpec">
+                    <div class="row text-center bg-white p-2 rounded border my-2" v-if="calculatedData">
                         <div class="col-6 border-end">
                             <span class="text-muted small d-block">Себестоимость:</span>
-                            <span class="fw-bold text-danger">{{ calculatedCostPrice.toLocaleString() }} ₸</span>
+                            <span class="fw-bold text-danger">{{ Number(calculatedCostPrice).toLocaleString() }} ₸</span>
                         </div>
                         <div class="col-6">
-                            <span class="text-muted small d-block">Реком. цена (x1.8):</span>
-                            <span class="fw-bold text-success">{{ recommendedRetailPrice.toLocaleString() }} ₸</span>
+                            <span class="text-muted small d-block">Реком. цена:</span>
+                            <span class="fw-bold text-success">{{ Number(recommendedRetailPrice).toLocaleString() }} ₸</span>
                         </div>
                     </div>
 
@@ -495,43 +507,50 @@ $APPLICATION->SetTitle("Канбан Заказов (Производство М
 
                 <!-- КАЛЬКУЛЯТОР В ОКНЕ СОЗДАНИЯ -->
                 <div class="calculator-box p-3 rounded mb-3" style="background: #f1f5f9; border: 1px solid #cbd5e1;">
-                    <h4 style="font-size: 15px; font-weight: 700; margin-bottom: 12px; color: #1e293b;">🧮 Выбор спецификации и расчет</h4>
+                    <h4 style="font-size: 15px; font-weight: 700; margin-bottom: 12px; color: #1e293b;">🧮 Выбор модели и расчет</h4>
 
                     <div class="row g-2 mb-2">
-                        <div class="col-md-6">
-                            <label class="form-label small">Модель / Спецификация</label>
-                            <select v-model="selectedSpecId" @change="onSpecChange" class="form-control form-control-sm">
-                                <option value="">-- Выберите модель --</option>
-                                <option v-for="spec in specifications" :key="spec.id" :value="spec.id">
-                                    {{ spec.title }} ({{ spec.size }})
-                                </option>
+                        <div class="col-md-4">
+                            <label class="form-label small">Модель</label>
+                            <select v-model="selectedModelId" class="form-control form-control-sm">
+                                <option value="">-- Модель --</option>
+                                <option v-for="m in models" :key="m.id" :value="m.id">{{ m.name }}</option>
                             </select>
                         </div>
-                        <div class="col-md-6">
+                        <div class="col-md-4">
+                            <label class="form-label small">Размер</label>
+                            <select v-model="selectedSpecId" class="form-control form-control-sm">
+                                <option value="">-- Размер --</option>
+                                <option v-for="s in modelSizes" :key="s.id" :value="s.id">{{ s.title }} ({{ s.size }})</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
                             <label class="form-label small">Ткань</label>
-                            <select v-model="selectedFabricId" @change="onFabricChange" class="form-control form-control-sm">
-                                <option value="">-- Выберите ткань --</option>
-                                <option v-for="fab in fabrics" :key="fab.id" :value="fab.id">
-                                    {{ fab.name }} ({{ fab.pricePerMeter }} ₸/м)
-                                </option>
+                            <select v-model="selectedFabricId" class="form-control form-control-sm">
+                                <option value="">-- Ткань --</option>
+                                <option v-for="fab in fabrics" :key="fab.id" :value="fab.id">{{ fab.name }} ({{ fab.pricePerMeter }} ₸/м)</option>
                             </select>
                         </div>
                     </div>
 
-                    <div class="form-check mb-2">
-                        <input type="checkbox" id="createMechCheck" v-model="hasMechanism" class="form-check-input">
-                        <label for="createMechCheck" class="form-check-label small fw-semibold">Подъемный механизм (ПМ)</label>
+                    <!-- Опции -->
+                    <div v-if="modelOptions.length > 0" class="mb-2">
+                        <label class="form-label small">Опции:</label>
+                        <div v-for="opt in modelOptions" :key="opt.id" class="form-check">
+                            <input type="checkbox" :value="opt.id" v-model="selectedOptionIds" class="form-check-input" :id="'copt-' + opt.id">
+                            <label :for="'copt-' + opt.id" class="form-check-label small">{{ opt.title }}</label>
+                        </div>
                     </div>
 
-                    <!-- Сводка калькулятора -->
-                    <div class="row text-center bg-white p-2 rounded border my-2" v-if="selectedSpec">
+                    <!-- Сводка -->
+                    <div class="row text-center bg-white p-2 rounded border my-2" v-if="calculatedData">
                         <div class="col-6 border-end">
                             <span class="text-muted small d-block">Себестоимость:</span>
-                            <span class="fw-bold text-danger">{{ calculatedCostPrice.toLocaleString() }} ₸</span>
+                            <span class="fw-bold text-danger">{{ Number(calculatedCostPrice).toLocaleString() }} ₸</span>
                         </div>
                         <div class="col-6">
-                            <span class="text-muted small d-block">Реком. цена (x1.8):</span>
-                            <span class="fw-bold text-success">{{ recommendedRetailPrice.toLocaleString() }} ₸</span>
+                            <span class="text-muted small d-block">Реком. цена:</span>
+                            <span class="fw-bold text-success">{{ Number(recommendedRetailPrice).toLocaleString() }} ₸</span>
                         </div>
                     </div>
 
@@ -540,12 +559,20 @@ $APPLICATION->SetTitle("Канбан Заказов (Производство М
                         <input type="number" v-model="customPriceTotal" :placeholder="recommendedRetailPrice" class="form-control form-control-sm fw-bold">
                     </div>
 
-                    <!-- Список материалов -->
                     <div v-if="shoppingList.length > 0" class="mt-2 pt-2 border-top">
                         <span class="form-label small fw-bold d-block">📦 Бланк закупки материалов:</span>
                         <ul class="mb-0 ps-3 small text-secondary">
                             <li v-for="(item, idx) in shoppingList" :key="idx">{{ item }}</li>
                         </ul>
+                    </div>
+
+                    <div v-if="selectedSpec && selectedSpec.files && selectedSpec.files.length > 0" class="mt-2 pt-2 border-top">
+                        <span class="form-label small fw-bold d-block">📐 Карта раскроя / Чертежи:</span>
+                        <div class="d-flex flex-wrap gap-2 mt-1">
+                            <a v-for="file in selectedSpec.files" :key="file.id" :href="file.src" target="_blank" class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size: 12px;">
+                                <i class="fa-solid fa-file-pdf"></i> {{ file.name }}
+                            </a>
+                        </div>
                     </div>
                 </div>
 
@@ -656,11 +683,14 @@ $APPLICATION->SetTitle("Канбан Заказов (Производство М
                     // Справочники для калькулятора
                     specifications: [],
                     fabrics: [],
+                    models: [],
+                    calculatedData: null,
 
                     // Переменные калькулятора в модальном окне
+                    selectedModelId: '',
                     selectedSpecId: '',
+                    selectedOptionIds: [],
                     selectedFabricId: '',
-                    hasMechanism: false,
                     customPriceTotal: null // Для хранения ручной цены
                 }
             },
@@ -669,7 +699,17 @@ $APPLICATION->SetTitle("Канбан Заказов (Производство М
                 this.fetchCalculatorData();
             },
             computed: {
-                // Текущая выбранная спецификация
+                // Спецификации-размеры для выбранной модели
+                modelSizes() {
+                    if (!this.selectedModelId) return [];
+                    return this.specifications.filter(s => s.model_id == this.selectedModelId && !s.is_option);
+                },
+                // Опции для выбранной модели
+                modelOptions() {
+                    if (!this.selectedModelId) return [];
+                    return this.specifications.filter(s => s.model_id == this.selectedModelId && s.is_option);
+                },
+                // Текущая выбранная спецификация (размер)
                 selectedSpec() {
                     return this.specifications.find(s => s.id == this.selectedSpecId) || null;
                 },
@@ -678,27 +718,12 @@ $APPLICATION->SetTitle("Канбан Заказов (Производство М
                     return this.fabrics.find(f => f.id == this.selectedFabricId) || null;
                 },
 
-                // 1. Расчет себестоимости
+                // Цены из API
                 calculatedCostPrice() {
-                    if (!this.selectedSpec) return 0;
-
-                    const baseCost = Number(this.selectedSpec.baseCost) || 0;
-                    const fabricPrice = this.selectedFabric ? (Number(this.selectedFabric.pricePerMeter) || 0) : 0;
-                    const fabricCost = (Number(this.selectedSpec.fabricConsumption) || 0) * fabricPrice;
-                    const mechanismCost = this.hasMechanism ? (Number(this.selectedSpec.mechanismCost) || 0) : 0;
-
-                    return baseCost + fabricCost + mechanismCost;
+                    return this.calculatedData ? this.calculatedData.cost_price : 0;
                 },
-
-                // Коэффициент наценки: из спецификации (PRICE_MULTIPLIER), либо 1.8 по умолчанию
-                selectedMultiplier() {
-                    const m = this.selectedSpec ? Number(this.selectedSpec.priceMultiplier) : 0;
-                    return m > 0 ? m : 1.8;
-                },
-
-                // 2. Рекомендованная розничная цена (ceil(Себестоимость * Коэффициент))
                 recommendedRetailPrice() {
-                    return Math.ceil(this.calculatedCostPrice * this.selectedMultiplier);
+                    return this.calculatedData ? this.calculatedData.recommended_price : 0;
                 },
 
                 // Итоговая цена (ручная или рекомендованная)
@@ -719,14 +744,20 @@ $APPLICATION->SetTitle("Канбан Заказов (Производство М
                         list.unshift(`Ткань ${this.selectedFabric.name} — ${this.selectedSpec.fabricConsumption} п.м.`);
                     }
 
-                    if (this.hasMechanism) {
-                        list.push('Комплект подъемного механизма + газлифты — 1 компл.');
-                    }
-
                     return list;
                 }
             },
             watch: {
+                selectedSpecId() {
+                    this.recalculatePrice();
+                },
+                selectedFabricId() {
+                    this.recalculatePrice();
+                },
+                selectedOptionIds: {
+                    handler() { this.recalculatePrice(); },
+                    deep: true
+                },
                 // Автоматически синхронизируем расчеты с формой создания/редактирования
                 calculatedCostPrice(val) {
                     if (this.isEditing) {
@@ -763,9 +794,24 @@ $APPLICATION->SetTitle("Канбан Заказов (Производство М
                             if (res.success) {
                                 this.specifications = res.specifications || [];
                                 this.fabrics = res.fabrics || [];
+                                this.models = res.models || [];
                             }
                         })
                         .catch(err => console.error('Ошибка загрузки данных калькулятора:', err));
+                },
+
+                // Пересчёт цены через API
+                recalculatePrice() {
+                    if (!this.selectedSpecId) return;
+                    let url = '/local/ajax/calculator_api.php?action=calculate&spec_id=' + encodeURIComponent(this.selectedSpecId)
+                        + '&fabric_id=' + encodeURIComponent(this.selectedFabricId || '0');
+                    if (this.selectedOptionIds.length > 0) {
+                        url += '&option_ids=' + this.selectedOptionIds.join(',');
+                    }
+                    fetch(url)
+                        .then(r => r.json())
+                        .then(d => { if (d.success) this.calculatedData = d.details; })
+                        .catch(() => {});
                 },
 
                 // При выборе спецификации автоматически проставляем размер в форму

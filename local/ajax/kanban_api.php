@@ -1,26 +1,4 @@
 <?php
-// Включаем отображение всех ошибок PHP
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
-
-// Функция-перехватчик фатальных ошибок
-register_shutdown_function(function() {
-    $error = error_get_last();
-    if ($error !== null && in_array($error['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR])) {
-        while (ob_get_level()) { ob_end_clean(); }
-        header('Content-Type: application/json; charset=utf-8');
-        echo json_encode([
-            'status' => 'fatal_error',
-            'error_type' => $error['type'],
-            'message' => $error['message'],
-            'file' => $error['file'],
-            'line' => $error['line']
-        ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
-        exit();
-    }
-});
-
 define("NO_KEEP_STATISTIC", true);
 define("NOT_CHECK_PERMISSIONS", true);
 define("BX_BUFFER_USED", true);

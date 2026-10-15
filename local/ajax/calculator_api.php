@@ -1,9 +1,10 @@
 <?php
+define("NO_KEEP_STATISTIC", true);
+define("NOT_CHECK_PERMISSIONS", true);
 require_once($_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php');
 
 use Bitrix\Main\Loader;
 
-// Очищаем буфер вывода
 while (ob_get_level()) {
     ob_end_clean();
 }
@@ -18,169 +19,212 @@ if (!Loader::includeModule('iblock')) {
 $action = isset($_REQUEST['action']) ? trim((string)$_REQUEST['action']) : '';
 
 /**
- * Достает цену за метр из свойств коллекции (ИБ 48).
- * Поддерживает и PRICE, и PRICE_PER_METER (в разных инсталляциях свойство может называться по-разному).
+ * Резолв цены ткани по ID (ИБ 48 или ИБ 51 через CSTAR_LINK/FABRIC_COLLECTION).
  */
-function fabricPriceFromProps($props) {
-    if (isset($props['PRICE']['VALUE']) && (float)$props['PRICE']['VALUE'] > 0) {
-        return (float)$props['PRICE']['VALUE'];
+function getFabricPricePerMeter($fabricId) {
+    $fabricId = (int)$fabricId;
+    if ($fabricId <= 0) return 0;
+
+    // Пробуем как коллекцию (ИБ 48)
+    $res = CIBlockElement::GetList(
+        array(), array('ID' => $fabricId, 'IBLOCK_ID' => 48, 'ACTIVE' => 'Y'),
+        false, false,
+        array('ID', 'NAME', 'PROPERTY_PRICE', 'PROPERTY_PRICE_PER_METER')
+    );
+    if ($ar = $res->Fetch()) {
+        $price = (float)$ar['PROPERTY_PRICE_VALUE'];
+        if ($price > 0) return $price;
+        $price = (float)$ar['PROPERTY_PRICE_PER_METER_VALUE'];
+        if ($price > 0) return $price;
     }
-    if (isset($props['PRICE_PER_METER']['VALUE']) && (float)$props['PRICE_PER_METER']['VALUE'] > 0) {
-        return (float)$props['PRICE_PER_METER']['VALUE'];
+
+    // Пробуем как цвет-SKU (ИБ 51) → коллекция (ИБ 48)
+    $res = CIBlockElement::GetList(
+        array(), array('ID' => $fabricId, 'IBLOCK_ID' => 51, 'ACTIVE' => 'Y'),
+        false, false,
+        array('ID', 'PROPERTY_CSTAR_LINK', 'PROPERTY_FABRIC_COLLECTION')
+    );
+    if ($ar = $res->Fetch()) {
+        $colId = (int)$ar['PROPERTY_CSTAR_LINK_VALUE'];
+        if ($colId <= 0) $colId = (int)$ar['PROPERTY_FABRIC_COLLECTION_VALUE'];
+        if ($colId <= 0) {
+            // Fallback через GetProperty
+            $rs = CIBlockElement::GetProperty(51, $fabricId, array(), array('CODE' => 'CSTAR_LINK'));
+            if ($p = $rs->Fetch()) $colId = (int)$p['VALUE'];
+            if ($colId <= 0) {
+                $rs = CIBlockElement::GetProperty(51, $fabricId, array(), array('CODE' => 'FABRIC_COLLECTION'));
+                if ($p = $rs->Fetch()) $colId = (int)$p['VALUE'];
+            }
+        }
+        if ($colId > 0) {
+            $res = CIBlockElement::GetList(
+                array(), array('ID' => $colId, 'IBLOCK_ID' => 48, 'ACTIVE' => 'Y'),
+                false, false,
+                array('ID', 'NAME', 'PROPERTY_PRICE', 'PROPERTY_PRICE_PER_METER')
+            );
+            if ($ar = $res->Fetch()) {
+                $price = (float)$ar['PROPERTY_PRICE_VALUE'];
+                if ($price > 0) return $price;
+                $price = (float)$ar['PROPERTY_PRICE_PER_METER_VALUE'];
+                if ($price > 0) return $price;
+            }
+        }
     }
     return 0;
 }
 
 /**
- * Резолв цены ткани по ID.
- * 1) Пробуем как элемент коллекции (ИБ 48) — так шлет канбан.
- * 2) Если не нашли/цена 0 — пробуем как цвет-SKU (ИБ 51): по CSTAR_LINK находим коллекцию (ИБ 48).
- *    Так устроена витрина: data-fabric-id у свотчей — это ID цвета ИБ 51.
+ * Читает ID материалов из спецификации (поддержка множественного MATERIALS_REF)
  */
-function getFabricPricePerMeter($fabricId) {
-    $fabricId = (int)$fabricId;
-    if ($fabricId <= 0) {
-        return 0;
-    }
-
-    $res = CIBlockElement::GetList(
-        array(),
-        array('ID' => $fabricId, 'IBLOCK_ID' => 48, 'ACTIVE' => 'Y'),
-        false,
-        false,
-        array('ID')
-    );
-    if ($ob = $res->GetNextElement()) {
-        $price = fabricPriceFromProps($ob->GetProperties());
-        if ($price > 0) {
-            return $price;
+function getMaterialRefs($iblockId, $elementId) {
+    $ids = array();
+    $rs = CIBlockElement::GetProperty($iblockId, $elementId, array(), array('CODE' => 'MATERIALS_REF'));
+    while ($prop = $rs->Fetch()) {
+        $val = $prop['VALUE'];
+        if (is_array($val)) {
+            foreach ($val as $v) { if (is_numeric($v)) $ids[] = (int)$v; }
+        } elseif (is_numeric($val)) {
+            $ids[] = (int)$val;
         }
     }
+    return $ids;
+}
 
-    $res = CIBlockElement::GetList(
-        array(),
-        array('ID' => $fabricId, 'IBLOCK_ID' => 51, 'ACTIVE' => 'Y'),
-        false,
-        false,
-        array('ID', 'PROPERTY_CSTAR_LINK')
-    );
-    if ($ob = $res->GetNextElement()) {
-        $fields = $ob->GetFields();
-        $colId = (int)$fields['PROPERTY_CSTAR_LINK_VALUE'];
-        if ($colId > 0) {
-            $res = CIBlockElement::GetList(
-                array(),
-                array('ID' => $colId, 'IBLOCK_ID' => 48, 'ACTIVE' => 'Y'),
-                false,
-                false,
-                array('ID')
-            );
-            if ($ob = $res->GetNextElement()) {
-                return fabricPriceFromProps($ob->GetProperties());
+/**
+ * Читает количество материалов из спецификации (MATERIALS_QTY)
+ */
+function getMaterialQtys($iblockId, $elementId) {
+    $qtys = array();
+    $rs = CIBlockElement::GetProperty($iblockId, $elementId, array(), array('CODE' => 'MATERIALS_QTY'));
+    while ($prop = $rs->Fetch()) {
+        $val = $prop['VALUE'];
+        if (is_array($val)) {
+            foreach ($val as $v) { $qtys[] = trim((string)$v); }
+        } elseif (!empty($val)) {
+            $qtys[] = trim((string)$val);
+        }
+    }
+    return $qtys;
+}
+
+/**
+ * Считает стоимость материалов спецификации через GetProperty
+ */
+function calcMaterialsCostGetProp($iblockId, $specId) {
+    $total = 0.0;
+    $materialsRefs = getMaterialRefs($iblockId, $specId);
+    $materialsQtys = getMaterialQtys($iblockId, $specId);
+    if (empty($materialsRefs)) return 0;
+
+    foreach ($materialsRefs as $i => $matId) {
+        $matId = (int)$matId;
+        if ($matId <= 0) continue;
+
+        $qty = (float)(isset($materialsQtys[$i]) ? $materialsQtys[$i] : 0);
+        if ($qty <= 0) continue;
+
+        $resMat = CIBlockElement::GetList(
+            array(),
+            array('ID' => $matId, 'IBLOCK_ID' => 50, 'ACTIVE' => 'Y'),
+            false, false,
+            array('ID', 'NAME', 'PROPERTY_PRICE')
+        );
+        if ($arMat = $resMat->Fetch()) {
+            $price = (float)$arMat['PROPERTY_PRICE_VALUE'];
+            if ($price > 0) {
+                $total += ceil($price * $qty);
             }
         }
     }
-
-    return 0;
+    return $total;
 }
 
-// 1. Получение списка спецификаций (ИБ 49) и тканей (ИБ 48) для интерфейса
+// === ACTION: get_initial_data — список спецификаций и тканей (для канбана)
 if ($action === 'get_initial_data') {
     $specifications = array();
     $fabrics = array();
 
-    // Запрос спецификаций моделей (IBLOCK_ID = 49)
-    $resSpec = CIBlockElement::GetList(
-        array('SORT' => 'ASC', 'NAME' => 'ASC'),
-        array('IBLOCK_ID' => 49, 'ACTIVE' => 'Y'),
-        false,
-        false,
-        array('ID', 'NAME')
-    );
-
-    while ($ob = $resSpec->GetNextElement()) {
-        $fields = $ob->GetFields();
-        $props = $ob->GetProperties();
-
-        // 1. Чертежи / карты раскроя (CUTTING_MAPS)
+    // Спецификации (ИБ 49) через Fetch
+        $resSpec = CIBlockElement::GetList(
+            array('SORT' => 'ASC', 'NAME' => 'ASC'),
+            array('IBLOCK_ID' => 49, 'ACTIVE' => 'Y'),
+            false, false,
+            array('ID', 'NAME', 'PROPERTY_SPEC_TYPE', 'PROPERTY_SIZE', 'PROPERTY_MODEL_ID', 'PROPERTY_PRICE_MULTIPLIER', 'PROPERTY_FABRIC_CONSUMPTION', 'PROPERTY_MATERIALS_REF', 'PROPERTY_MATERIALS_QTY', 'PROPERTY_CUTTING_MAPS')
+        );
+    while ($ar = $resSpec->Fetch()) {
         $files = array();
-        $cuttingMapsVal = isset($props['CUTTING_MAPS']['VALUE']) ? $props['CUTTING_MAPS']['VALUE'] : null;
-        if (!empty($cuttingMapsVal)) {
-            $fileIds = is_array($cuttingMapsVal) ? $cuttingMapsVal : array($cuttingMapsVal);
+        $cuttingVal = $ar['PROPERTY_CUTTING_MAPS_VALUE'];
+        if (!empty($cuttingVal)) {
+            $fileIds = is_array($cuttingVal) ? $cuttingVal : array($cuttingVal);
             foreach ($fileIds as $fId) {
                 if (is_numeric($fId) && (int)$fId > 0) {
-                    $filePath = CFile::GetPath($fId);
-                    $fileArr = CFile::GetFileArray($fId);
-                    if ($filePath) {
-                        $files[] = array(
-                            'id' => (int)$fId,
-                            'src' => $filePath,
-                            'name' => isset($fileArr['ORIGINAL_NAME']) ? $fileArr['ORIGINAL_NAME'] : 'Чертеж'
-                        );
-                    }
+                    $fp = CFile::GetPath($fId);
+                    $fa = CFile::GetFileArray($fId);
+                    if ($fp) $files[] = array('id' => (int)$fId, 'src' => $fp, 'name' => !empty($fa['ORIGINAL_NAME']) ? $fa['ORIGINAL_NAME'] : 'Чертеж');
                 }
             }
         }
 
-        // 2. Список материалов (MATERIALS_LIST)
-        $cleanMaterials = array();
-        $materialsVal = isset($props['MATERIALS_LIST']['VALUE']) ? $props['MATERIALS_LIST']['VALUE'] : array();
-        if (!is_array($materialsVal)) {
-            $materialsVal = !empty($materialsVal) ? array($materialsVal) : array();
-        }
-
-        foreach ($materialsVal as $mat) {
-            if (is_array($mat)) {
-                if (isset($mat['TEXT']) && is_string($mat['TEXT']) && trim($mat['TEXT']) !== '') {
-                    $cleanMaterials[] = trim($mat['TEXT']);
-                } elseif (isset($mat['VALUE']) && (is_string($mat['VALUE']) || is_numeric($mat['VALUE']))) {
-                    $cleanMaterials[] = trim((string)$mat['VALUE']);
-                }
-            } elseif (is_string($mat) || is_numeric($mat)) {
-                $val = trim((string)$mat);
-                if ($val !== '') {
-                    $cleanMaterials[] = $val;
-                }
+        // Материалы для списка закупки
+                $st = '';
+                $stXml2 = $ar['PROPERTY_SPEC_TYPE_VALUE_XML_ID'];
+                $stVal2 = $ar['PROPERTY_SPEC_TYPE_VALUE'];
+                if (!empty($stXml2)) $st = $stXml2;
+                elseif (!empty($stVal2)) $st = $stVal2;
+                $mats = array();
+        $matIds = $ar['PROPERTY_MATERIALS_REF_VALUE'];
+        $matQtys = $ar['PROPERTY_MATERIALS_QTY_VALUE'];
+        if (!empty($matIds)) {
+            $idArr = is_array($matIds) ? $matIds : array($matIds);
+            $qtyArr = !empty($matQtys) ? (is_array($matQtys) ? $matQtys : array($matQtys)) : array();
+            foreach ($idArr as $i => $mid) {
+                $mid = (int)$mid;
+                if ($mid <= 0) continue;
+                $qty = (float)(isset($qtyArr[$i]) ? $qtyArr[$i] : 0);
+                // Читаем название материала
+                $rm = CIBlockElement::GetList(array(), array('ID' => $mid, 'IBLOCK_ID' => 50), false, false, array('ID', 'NAME'));
+                if ($am = $rm->Fetch()) $mats[] = $am['NAME'] . ' x' . $qty;
             }
         }
-
-        // 3. Размер (SIZE)
-        $rawSize = isset($props['SIZE']['VALUE']) ? $props['SIZE']['VALUE'] : '';
-        $sizeStr = is_array($rawSize) ? implode(', ', array_filter($rawSize)) : (string)$rawSize;
 
         $specifications[] = array(
-                    'id' => (int)$fields['ID'],
-                    'title' => (string)$fields['NAME'],
-                    'size' => $sizeStr,
-                    'priceMultiplier' => (float)(isset($props['PRICE_MULTIPLIER']['VALUE']) ? $props['PRICE_MULTIPLIER']['VALUE'] : 0),
-                    'baseCost' => (float)(isset($props['BASE_COST']['VALUE']) ? $props['BASE_COST']['VALUE'] : 0),
-                    'mechanismCost' => (float)(isset($props['MECHANISM_COST']['VALUE']) ? $props['MECHANISM_COST']['VALUE'] : 0),
-                    'fabricConsumption' => (float)(isset($props['FABRIC_CONSUMPTION']['VALUE']) ? $props['FABRIC_CONSUMPTION']['VALUE'] : 0),
-                    'materialsList' => array_values($cleanMaterials),
-                    'files' => $files
+                            'id' => (int)$ar['ID'],
+                            'title' => $ar['NAME'],
+                            'size' => !empty($ar['PROPERTY_SIZE_VALUE']) ? $ar['PROPERTY_SIZE_VALUE'] : '',
+                            'model_id' => (int)$ar['PROPERTY_MODEL_ID_VALUE'],
+                            'spec_type' => $st,
+                            'is_option' => ($st === 'OPTION' || $st === 'Опция') ? true : false,
+                    'priceMultiplier' => (float)$ar['PROPERTY_PRICE_MULTIPLIER_VALUE'],
+                    'fabricConsumption' => (float)$ar['PROPERTY_FABRIC_CONSUMPTION_VALUE'],
+                    'materialsList' => $mats,
+                    'files' => $files,
                 );
             }
 
-    // Запрос коллекций тканей (IBLOCK_ID = 48)
-    $resFabrics = CIBlockElement::GetList(
+            // Модели (ИБ 46)
+            $models = array();
+            $resMod = CIBlockElement::GetList(
+                array('SORT' => 'ASC', 'NAME' => 'ASC'),
+                array('IBLOCK_ID' => 46, 'ACTIVE' => 'Y'),
+                false, false,
+                array('ID', 'NAME')
+            );
+            while ($arMod = $resMod->Fetch()) {
+                $models[] = array('id' => (int)$arMod['ID'], 'name' => $arMod['NAME']);
+            }
+
+            // Ткани (ИБ 48)
+    $resFab = CIBlockElement::GetList(
         array('SORT' => 'ASC', 'NAME' => 'ASC'),
         array('IBLOCK_ID' => 48, 'ACTIVE' => 'Y'),
-        false,
-        false,
-        array('ID', 'NAME')
+        false, false,
+        array('ID', 'NAME', 'PROPERTY_PRICE_PER_METER')
     );
-
-    while ($ob = $resFabrics->GetNextElement()) {
-        $fields = $ob->GetFields();
-        $props = $ob->GetProperties();
-
-        // Проверяем цену за метр (PRICE или PRICE_PER_METER)
-                $price = fabricPriceFromProps($props);
-
+    while ($ar = $resFab->Fetch()) {
         $fabrics[] = array(
-            'id' => (int)$fields['ID'],
-            'name' => (string)$fields['NAME'],
-            'pricePerMeter' => $price
+            'id' => (int)$ar['ID'],
+            'name' => $ar['NAME'],
+            'pricePerMeter' => (float)$ar['PROPERTY_PRICE_PER_METER_VALUE'],
         );
     }
 
@@ -192,45 +236,71 @@ if ($action === 'get_initial_data') {
     exit();
 }
 
-// 2. Динамический расчет себестоимости и рекомендуемой цены
+// === ACTION: calculate ===
 if ($action === 'calculate') {
-    $specId = isset($_REQUEST['spec_id']) ? (int)$_REQUEST['spec_id'] : 0;
-    $fabricId = isset($_REQUEST['fabric_id']) ? (int)$_REQUEST['fabric_id'] : 0;
-    $hasMechanism = (isset($_REQUEST['has_mechanism']) && ($_REQUEST['has_mechanism'] === 'true' || $_REQUEST['has_mechanism'] === '1'));
+    $specId     = isset($_REQUEST['spec_id']) ? (int)$_REQUEST['spec_id'] : 0;
+    $fabricId   = isset($_REQUEST['fabric_id']) ? (int)$_REQUEST['fabric_id'] : 0;
+    $optionIds  = isset($_REQUEST['option_ids']) ? $_REQUEST['option_ids'] : '';
     $marginCoeff = isset($_REQUEST['margin_coeff']) ? (float)$_REQUEST['margin_coeff'] : 0;
 
-    $baseCost = 0;
-    $fabricConsumption = 0;
-    $mechanismCost = 0;
-    $pricePerMeter = 0;
-    $priceMultiplier = 0;
-
-    // Считываем спецификацию (ИБ 49)
-    if ($specId > 0) {
-        $res = CIBlockElement::GetList(array(), array('ID' => $specId, 'IBLOCK_ID' => 49), false, false, array('ID'));
-        if ($ob = $res->GetNextElement()) {
-            $props = $ob->GetProperties();
-            $baseCost = (float)(isset($props['BASE_COST']['VALUE']) ? $props['BASE_COST']['VALUE'] : 0);
-            $fabricConsumption = (float)(isset($props['FABRIC_CONSUMPTION']['VALUE']) ? $props['FABRIC_CONSUMPTION']['VALUE'] : 0);
-            $mechanismCost = (float)(isset($props['MECHANISM_COST']['VALUE']) ? $props['MECHANISM_COST']['VALUE'] : 0);
-            $priceMultiplier = (float)(isset($props['PRICE_MULTIPLIER']['VALUE']) ? $props['PRICE_MULTIPLIER']['VALUE'] : 0);
+    // Парсим option_ids
+    $optIdArr = array();
+    if (!empty($optionIds)) {
+        if (is_array($optionIds)) {
+            foreach ($optionIds as $oid) $optIdArr[] = (int)$oid;
+        } else {
+            foreach (explode(',', (string)$optionIds) as $part) {
+                $part = trim($part);
+                if (is_numeric($part)) $optIdArr[] = (int)$part;
+            }
         }
     }
 
-    // Считываем цену ткани: ИБ 48 (коллекция) или ИБ 51 (цвет-SKU) через CSTAR_LINK
+    $materialsCost = 0.0;
+    $fabricConsumption = 0.0;
+    $priceMultiplier = 0.0;
+
+    // Собираем все spec_id для расчёта: базовая + опции
+    $allSpecIds = array($specId);
+    foreach ($optIdArr as $oid) {
+        if ($oid > 0 && $oid !== $specId) $allSpecIds[] = $oid;
+    }
+
+    foreach ($allSpecIds as $sid) {
+        if ($sid <= 0) continue;
+
+        if ($sid === $specId) {
+            // Базовая спецификация: материалы через GetProperty
+            $materialsCost += calcMaterialsCostGetProp(49, $sid);
+
+            // FABRIC_CONSUMPTION и PRICE_MULTIPLIER через Fetch
+            $res = CIBlockElement::GetList(
+                array(), array('ID' => $sid, 'IBLOCK_ID' => 49, 'ACTIVE' => 'Y'),
+                false, false,
+                array('ID', 'PROPERTY_FABRIC_CONSUMPTION', 'PROPERTY_PRICE_MULTIPLIER')
+            );
+            if ($ar = $res->Fetch()) {
+                $fc = (float)$ar['PROPERTY_FABRIC_CONSUMPTION_VALUE'];
+                if ($fc > 0) $fabricConsumption = $fc;
+
+                $pm = (float)$ar['PROPERTY_PRICE_MULTIPLIER_VALUE'];
+                if ($pm > 0) $priceMultiplier = $pm;
+            }
+        } else {
+            // Опция: материалы через GetProperty
+            $materialsCost += calcMaterialsCostGetProp(49, $sid);
+        }
+    }
+
+    $pricePerMeter = 0;
     if ($fabricId > 0) {
         $pricePerMeter = getFabricPricePerMeter($fabricId);
     }
-
-    // Расчет себестоимости: База + (Расход ткани * Цена ткани за метр) + (Механизм, если выбран)
     $fabricTotalCost = $fabricConsumption * $pricePerMeter;
-    $mechanismTotalCost = $hasMechanism ? $mechanismCost : 0;
 
-    $costPrice = $baseCost + $fabricTotalCost + $mechanismTotalCost;
+    $costPrice = $materialsCost + $fabricTotalCost;
 
-    // Коэффициент наценки: приоритет у PRICE_MULTIPLIER из спецификации, затем переданный, затем 1.8
     $finalCoeff = $priceMultiplier > 0 ? $priceMultiplier : ($marginCoeff > 0 ? $marginCoeff : 1.8);
-    // Розничная цена по ТЗ: ceil(Себестоимость * Коэффициент)
     $recommendedPrice = (int)ceil($costPrice * $finalCoeff);
 
     echo json_encode(array(
@@ -238,12 +308,12 @@ if ($action === 'calculate') {
         'cost_price' => round($costPrice, 2),
         'recommended_price' => $recommendedPrice,
         'details' => array(
-            'base_cost' => $baseCost,
+            'materials_cost' => $materialsCost,
             'fabric_cost' => $fabricTotalCost,
-            'mechanism_cost' => $mechanismTotalCost,
             'fabric_consumption' => $fabricConsumption,
             'price_per_meter' => $pricePerMeter,
-            'price_multiplier' => $finalCoeff
+            'price_multiplier' => $finalCoeff,
+            'option_ids' => $optIdArr,
         )
     ), JSON_UNESCAPED_UNICODE);
     exit();
