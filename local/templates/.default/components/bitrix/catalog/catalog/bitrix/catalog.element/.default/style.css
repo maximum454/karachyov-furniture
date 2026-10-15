@@ -1,0 +1,17 @@
+.card__items{
+	width: 100%;
+	display: flex;
+	align-items: flex-end;
+	justify-content: space-between;
+	-webkit-flex-wrap: wrap;
+	    -ms-flex-wrap: wrap;
+	        flex-wrap: wrap;
+	margin-bottom: 20px;
+}
+.card__item{
+	width: 100%;
+	max-width: 98px;
+}
+.b-card__info .card__calc .card__item input{
+	width: 100%;
+}
